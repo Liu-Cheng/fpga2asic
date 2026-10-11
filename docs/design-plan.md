@@ -1,126 +1,126 @@
-# FPGA IP 到 ASIC 行为级 RTL 替换系统开发方案
+# FPGA IP to ASIC Behavioral RTL Replacement System — Design Plan
 
-## 1. 文档目的
+## 1. Purpose of this document
 
-本文档定义一套面向 FPGA 数字 IP 的 RTL 转换系统。系统以验证为核心，将含有 Xilinx FPGA IP 的设计分解为可管理的替换任务，按照模块依赖关系自底向上，将 FPGA 专用模块逐步替换为厂商无关、面向 ASIC 综合的行为级 Verilog 实现。
+This document defines an RTL conversion system for FPGA digital IP. The system is verification-centric: it decomposes a design containing Xilinx FPGA IP into manageable replacement tasks, and, following the module dependency order bottom-up, progressively replaces FPGA-specific modules with vendor-neutral, ASIC-synthesis-oriented behavioral Verilog implementations.
 
-系统不以“尽可能多地生成代码”为首要目标，而以“每个被接受的替换都有可重复的验证证据”为首要目标。无法自动替换或无法充分验证的模块必须停止自动提升，并输出人工处理报告。
+The primary goal of the system is not "generate as much code as possible", but "every accepted replacement has reproducible verification evidence". Modules that cannot be replaced automatically, or that cannot be verified adequately, must stop automatic promotion and produce a manual-handling report.
 
-## 2. 产品定位与边界
+## 2. Product positioning and boundaries
 
-### 2.1 产品定位
+### 2.1 Product positioning
 
-系统定位为：
+The system is positioned as:
 
-> 验证驱动的 FPGA 数字 IP 分解、行为级替换与 ASIC RTL 迁移平台。
+> A verification-driven platform for FPGA digital IP decomposition, behavioral replacement, and ASIC RTL migration.
 
-核心能力包括：
+Core capabilities include:
 
-1. 解析完整 FPGA RTL 工程及其层次结构。
-2. 识别 Xilinx IP、基础原语和由 IP 生成器产生的模块。
-3. 将整体设计分解为具有依赖关系的替换任务。
-4. 检查每个待替换模块是否具有可复用 Testbench。
-5. 使用 Xilinx 仿真工具建立原始 FPGA 实现的参考结果。
-6. 使用 VCS 等 ASIC 仿真工具验证替换后的行为级实现。
-7. 从叶子模块开始，逐层完成替换、验证和集成回归。
-8. 对不能替换或不能验证的任务生成结构化报告。
+1. Parse a complete FPGA RTL project and its hierarchy.
+2. Recognize Xilinx IP, base primitives, and modules produced by IP generators.
+3. Decompose the overall design into replacement tasks with dependencies.
+4. Check whether every module to be replaced has a reusable testbench.
+5. Use Xilinx simulation tools to establish the reference result of the original FPGA implementation.
+6. Use ASIC simulators such as VCS to verify the behavior of the replacement implementation.
+7. Starting from leaf modules, complete replacement, verification, and integration regression layer by layer.
+8. Produce a structured report for tasks that cannot be replaced or cannot be verified.
 
-### 2.2 支持范围
+### 2.2 Supported scope
 
-第一阶段重点支持以下数字 IP：
+Phase one focuses on the following digital IP:
 
-- BRAM、ROM、分布式 RAM。
-- 同步 FIFO、异步 FIFO。
-- DSP、乘法器、加法器、MAC、累加器。
-- AXI4-Lite Interconnect、Crossbar。
-- AXI4/AXI4-Lite Register Slice。
-- AXI Data Width Converter。
-- AXI Clock Converter。
-- 常规 AXI 地址译码、仲裁和缓冲模块。
-- 可以用可综合 RTL 准确描述的其他纯数字 IP。
+- BRAM, ROM, distributed RAM.
+- Synchronous FIFO, asynchronous FIFO.
+- DSP, multipliers, adders, MAC, accumulators.
+- AXI4-Lite Interconnect, Crossbar.
+- AXI4/AXI4-Lite Register Slice.
+- AXI Data Width Converter.
+- AXI Clock Converter.
+- Conventional AXI address decoding, arbitration, and buffering modules.
+- Other purely digital IP that can be described accurately in synthesizable RTL.
 
-### 2.3 不支持范围
+### 2.3 Unsupported scope
 
-以下模块不作为自动行为级替换目标：
+The following modules are not targets for automatic behavioral replacement:
 
-- PLL、MMCM 等模拟或混合信号时钟 IP。
-- DDR、PCIe、Ethernet 等 PHY。
-- SERDES、ADC、DAC。
-- FPGA 配置和启动控制模块。
-- 加密且无法恢复功能配置的第三方 IP。
-- 依赖特定 FPGA 器件模拟特性的模块。
-- 只有 bitstream、没有 RTL、网表或配置数据的设计。
+- Analog or mixed-signal clock IP such as PLL and MMCM.
+- PHYs such as DDR, PCIe, and Ethernet.
+- SERDES, ADC, DAC.
+- FPGA configuration and startup control modules.
+- Third-party IP that is encrypted and whose functional configuration cannot be recovered.
+- Modules that depend on device-specific analog characteristics of a particular FPGA.
+- Designs for which only a bitstream exists, with no RTL, netlist, or configuration data.
 
-这些模块应被识别为边界节点，并进入人工处理任务列表。
+These modules should be recognized as boundary nodes and moved into the manual-handling task list.
 
-## 3. 总体设计原则
+## 3. Overall design principles
 
-### 3.1 验证先于替换
+### 3.1 Verification before replacement
 
-每个替换任务必须先通过 Testbench 准入检查。没有可复用 Testbench 的模块不能直接进入自动替换流程。
+Every replacement task must first pass a testbench admission check. Modules without a reusable testbench cannot enter the automatic replacement flow directly.
 
-Testbench 准入至少要求：
+Testbench admission requires at least:
 
-- 能独立实例化待替换模块。
-- 能稳定地完成时钟、复位和输入激励。
-- 能在指定随机种子下重复运行。
-- 能覆盖模块的主要功能模式。
-- 能产生工具无关的标准结果或事务记录。
-- 验证代码可以分别驱动原 FPGA 实现和 ASIC 替代实现。
-- 不把 Xilinx 仿真库调用直接散布在公共激励和检查逻辑中。
+- The module under replacement can be instantiated standalone.
+- Clock, reset, and input stimulus can be driven reliably.
+- Runs can be repeated under a specified random seed.
+- The major functional modes of the module can be covered.
+- Tool-independent standard results or transaction records can be produced.
+- The verification code can drive the original FPGA implementation and the ASIC replacement implementation separately.
+- Xilinx simulation library calls are not scattered directly through the shared stimulus and checking logic.
 
-系统可以生成 Testbench 骨架，但自动生成的骨架在人工补充功能场景并通过基准仿真前，不能标记为可复用 Testbench。
+The system may generate a testbench skeleton, but an automatically generated skeleton must not be marked as a reusable testbench until functional scenarios have been added manually and it has passed a baseline simulation.
 
-### 3.2 同一验证源，不同仿真后端
+### 3.2 One verification source, different simulation backends
 
-“统一验证代码”不要求原设计和替代设计在同一个仿真进程中运行。推荐结构为：
+"Unified verification code" does not require the original design and the replacement design to run in the same simulation process. The recommended structure is:
 
 ```text
-公共验证源
-├── 激励生成器
-├── 协议驱动器
-├── 监视器
-├── 结果采集器
-├── 比较规则
-└── 测试用例与随机种子
+Common verification source
+├── stimulus generator
+├── protocol driver
+├── monitor
+├── result collector
+├── comparison rules
+└── testcases and random seeds
         │
-        ├── Xilinx DUT Adapter → Xilinx Simulator
-        └── ASIC DUT Adapter   → VCS/其他 ASIC Simulator
+        ├── Xilinx DUT adapter → Xilinx simulator
+        └── ASIC DUT adapter   → VCS/other ASIC simulator
 ```
 
-公共验证源负责定义测试内容和结果语义；DUT Adapter 负责处理模块名、端口名、仿真库和编译选项的差异。
+The common verification source defines the test content and the result semantics; the DUT adapter handles differences in module names, port names, simulation libraries, and compile options.
 
-### 3.3 可综合实现优先使用 Verilog
+### 3.3 Prefer Verilog for synthesizable implementations
 
-替代 IP、兼容 Wrapper 和生成的可综合 RTL 原则上采用 Verilog-2001 风格，避免依赖 SystemVerilog 综合特性。
+Replacement IP, compatible wrappers, and generated synthesizable RTL should in principle use Verilog-2001 style, avoiding dependence on SystemVerilog synthesis features.
 
-推荐使用：
+Recommended:
 
-- `wire`、`reg`。
-- `always @(*)`。
-- `always @(posedge clk or negedge rst_n)`。
-- 非阻塞赋值描述时序逻辑。
-- blocking 赋值描述组合逻辑。
-- 参数化模块和标准 `generate`。
-- 扁平化的 AXI 端口信号。
+- `wire`, `reg`.
+- `always @(*)`.
+- `always @(posedge clk or negedge rst_n)`.
+- Non-blocking assignments for sequential logic.
+- Blocking assignments for combinational logic.
+- Parameterized modules and standard `generate`.
+- Flattened AXI port signals.
 
-可综合代码中避免使用：
+Avoid in synthesizable code:
 
-- `logic`、`always_ff`、`always_comb`。
-- `interface`、`modport`。
-- class、动态数组、queue、mailbox。
-- SystemVerilog assertion。
-- 依赖特定仿真器的系统任务。
+- `logic`, `always_ff`, `always_comb`.
+- `interface`, `modport`.
+- classes, dynamic arrays, queues, mailboxes.
+- SystemVerilog assertions.
+- Simulator-specific system tasks.
 
-Testbench 不受这一限制。验证代码可以使用两个仿真器都支持的 SystemVerilog 子集，必要时也可以使用 UVM，但必须把仿真器专用内容隔离在后端适配层中。
+Testbenches are not subject to this restriction. Verification code may use the SystemVerilog subset supported by both simulators, and may use UVM when necessary, but simulator-specific content must be isolated in the backend adaptation layer.
 
-### 3.4 最小化修改上层设计
+### 3.4 Minimize changes to the upper-level design
 
-系统优先生成与原 IP 模块同名、同端口的兼容 Wrapper，而不是大规模改写用户顶层 RTL。例如：
+The system prefers generating a compatible wrapper with the same module name and the same ports as the original IP module, rather than extensively rewriting the user's top-level RTL. For example:
 
 ```verilog
 module design_axi_interconnect_0 (
-    /* 保持原模块端口 */
+    /* keep the original module ports */
 );
 
 portable_axi_interconnect #(
@@ -129,80 +129,80 @@ portable_axi_interconnect #(
     .DATA_WIDTH (64),
     .ADDR_WIDTH (32)
 ) u_impl (
-    /* 自动生成端口映射 */
+    /* automatically generated port mapping */
 );
 
 endmodule
 ```
 
-这种方法可以减小变更范围，并允许同一个上层 Testbench 在替换前后继续使用。
+This approach reduces the scope of change and allows the same upper-level testbench to continue to be used before and after replacement.
 
-### 3.5 确定性转换
+### 3.5 Deterministic conversion
 
-自动替换应由确定性规则、参数检查和模板生成完成。任何具有歧义的推断必须降级为人工确认，不允许在未报告的情况下猜测 IP 行为。
+Automatic replacement should be performed by deterministic rules, parameter checks, and template generation. Any ambiguous inference must be downgraded to manual confirmation; guessing IP behavior without reporting it is not allowed.
 
-## 4. 系统总体架构
+## 4. Overall system architecture
 
-系统拆分为两个可以独立部署、独立演进的功能。RTL 提取功能不执行 IP 替换和仿真；IP 替换验证功能不解析 RTL 或重新提取子模块。两者只通过版本化的 `design-manifest.json` 连接。
+The system is split into two capabilities that can be deployed and evolved independently. RTL extraction does not perform IP replacement or simulation; IP replacement verification does not parse RTL or re-extract submodules. The two are connected only through the versioned `design-manifest.json`.
 
 ```mermaid
 flowchart LR
-    subgraph EXTRACT["功能一：RTL层次与子模块提取"]
-        A["FPGA工程输入"] --> B["工程解析与层次展开"]
+    subgraph EXTRACT["Capability 1: RTL hierarchy and submodule extraction"]
+        A["FPGA project input"] --> B["Project parsing and hierarchy elaboration"]
         B --> B2["design-manifest.json"]
     end
-    subgraph VERIFY["功能二：IP替换与远程验证"]
-        C["IP识别与边界判定"] --> D["依赖DAG与替换任务列表"]
-        D --> E["Testbench准入检查"]
-        E -->|"不满足"| M["阻塞并生成TB补充任务"]
-        E -->|"满足"| F["Xilinx仿真生成FPGA基准"]
-        F --> G["生成或选择行为级Verilog实现"]
-        G --> H["VCS仿真生成ASIC结果"]
-        H --> I["RTL仿真结果比较（信号级/协议级）"]
-        I -->|"失败"| N["诊断、回退或人工处理"]
-        I -->|"通过"| J["接受替换并更新可移植闭包"]
-        J --> K["父模块集成验证"]
-        K --> L["继续处理上层任务"]
+    subgraph VERIFY["Capability 2: IP replacement and remote verification"]
+        C["IP recognition and boundary decision"] --> D["Dependency DAG and replacement task list"]
+        D --> E["Testbench admission check"]
+        E -->|"not satisfied"| M["Block and generate TB completion tasks"]
+        E -->|"satisfied"| F["Xilinx simulation produces the FPGA baseline"]
+        F --> G["Generate or select a behavioral Verilog implementation"]
+        G --> H["VCS simulation produces the ASIC result"]
+        H --> I["RTL simulation result comparison (signal / transaction level)"]
+        I -->|"fail"| N["Diagnose, roll back, or handle manually"]
+        I -->|"pass"| J["Accept the replacement and update the portable closure"]
+        J --> K["Parent module integration verification"]
+        K --> L["Continue with higher-level tasks"]
     end
     B2 --> C
 ```
 
-功能一由以下组件构成：
+Capability one consists of the following components:
 
-1. 项目解析器。
-2. RTL elaboration 和层次图构建器。
-3. 标准设计清单输出器。
+1. Project parser.
+2. RTL elaboration and hierarchy graph builder.
+3. Standard design manifest emitter.
 
-功能二由以下组件构成：
+Capability two consists of the following components:
 
-1. 设计清单读取与版本检查器。
-2. FPGA IP 识别器和替换边界分析器。
-3. 替换任务 DAG 构建器。
-4. Testbench 管理器和任务调度器。
-5. 行为级 IP 库和代码生成器。
-6. Xilinx 与 VCS/ASIC 远程仿真后端。
-7. 标准结果采集、比较、回归和报告系统。
+1. Design manifest reader and version checker.
+2. FPGA IP recognizer and replacement boundary analyzer.
+3. Replacement task DAG builder.
+4. Testbench manager and task scheduler.
+5. Behavioral IP library and code generator.
+6. Xilinx and VCS/ASIC remote simulation backends.
+7. Standard result collection, comparison, regression, and reporting system.
 
-## 5. 独立的 RTL 提取功能
+## 5. Standalone RTL extraction capability
 
-### 5.1 工程输入
+### 5.1 Project inputs
 
-RTL 提取器应支持以下输入：
+The RTL extractor should support the following inputs:
 
-- Verilog/SystemVerilog 源文件。
-- 头文件和 include 路径。
-- 宏定义和编译顺序。
-- 顶层模块名称。
-- Vivado 工程文件和 Tcl 脚本。
-- XCI、BD 等 Xilinx IP 配置文件。
-- 仿真文件集合和综合文件集合。
-- Xilinx 仿真库信息。
+- Verilog/SystemVerilog source files.
+- Header files and include paths.
+- Macro definitions and compile order.
+- Top module name.
+- Vivado project files and Tcl scripts.
+- Xilinx IP configuration files such as XCI and BD.
+- Simulation file sets and synthesis file sets.
+- Xilinx simulation library information.
 
-该功能只生成模块定义、实例关系、源文件位置和完整层次树，不识别替换任务，不调用 Testbench，也不连接仿真服务器。
+This capability only produces module definitions, instance relationships, source file locations, and the complete hierarchy tree. It does not recognize replacement tasks, does not invoke testbenches, and does not connect to simulation servers.
 
-其输出必须符合版本化的 `design-manifest.json` 接口。IP 替换验证工具只读取该接口，因此也可以使用原有 repo 的子模块提取功能代替本系统附带的参考提取器。
+Its output must conform to the versioned `design-manifest.json` interface. The IP replacement verification tool only reads that interface, so an existing repository's submodule extraction capability may also be used in place of the reference extractor bundled with this system.
 
-项目描述文件示例：
+Example project description file:
 
 ```yaml
 project:
@@ -228,62 +228,62 @@ verification:
   test_list: verification/tests.yaml
 ```
 
-### 5.2 层次展开
+### 5.2 Hierarchy elaboration
 
-解析器需要完成预处理、参数求值、generate 展开和模块实例绑定，输出实际设计层次，而不是只根据源文件中的模块定义建立关系。
+The parser needs to perform preprocessing, parameter evaluation, `generate` expansion, and module instance binding, and output the actual design hierarchy rather than establishing relationships only from the module definitions present in the source files.
 
-每个实例节点至少记录：
+Each instance node records at least:
 
-- 层次路径。
-- 模块定义。
-- 源文件和行号。
-- 实际参数值。
-- 端口连接。
-- 子实例列表。
-- 是否为 Xilinx IP 或基础原语。
-- 是否具有独立 Testbench。
-- 是否存在厂商配置文件。
-- 是否可作为独立替换边界。
+- Hierarchy path.
+- Module definition.
+- Source file and line number.
+- Actual parameter values.
+- Port connections.
+- List of child instances.
+- Whether it is Xilinx IP or a base primitive.
+- Whether it has a standalone testbench.
+- Whether a vendor configuration file exists.
+- Whether it can serve as an independent replacement boundary.
 
-### 5.3 依赖 DAG
+### 5.3 Dependency DAG
 
-模块实例关系被转换为依赖 DAG：
+Module instance relationships are converted into a dependency DAG:
 
-- 节点表示可替换模块或 IP。
-- 边 `A → B` 表示模块 A 依赖子模块 B。
-- 没有待替换子节点的节点为叶子替换任务。
-- 调度器按逆拓扑顺序，从叶子向顶层处理。
+- Nodes represent replaceable modules or IP.
+- An edge `A → B` means module A depends on submodule B.
+- Nodes with no child node to be replaced are leaf replacement tasks.
+- The scheduler processes in reverse topological order, from leaves toward the top.
 
-设计层次树和替换任务 DAG 不完全相同。同一个参数化模块的多个实例可以：
+The design hierarchy tree and the replacement task DAG are not exactly the same. Multiple instances of the same parameterized module can:
 
-- 在参数完全一致时合并为一个实现任务、多个实例回归任务。
-- 在参数不同时拆分为不同的配置任务。
-- 在上下文行为不同时保持实例级任务。
+- Be merged into one implementation task with multiple instance regression tasks when the parameters are exactly identical.
+- Be split into different configuration tasks when the parameters differ.
+- Remain as instance-level tasks when the context behavior differs.
 
-### 5.4 替换边界判定
+### 5.4 Replacement boundary decision
 
-系统应尽量向底层分解，但不能盲目拆到最小语法模块。替换边界应同时满足：
+The system should decompose as far down as possible, but must not blindly split down to the smallest syntactic module. A replacement boundary should satisfy all of:
 
-- 能明确描述输入输出接口。
-- 能恢复完整功能参数。
-- 能独立建立或复用 Testbench。
-- 内部未包含必须整体处理的协议状态。
-- 拆分后不会破坏原 IP 的原子语义。
+- Its input/output interface can be described unambiguously.
+- Its complete functional parameters can be recovered.
+- A testbench can be established or reused independently.
+- It does not internally contain protocol state that must be handled as a whole.
+- Splitting it does not destroy the atomic semantics of the original IP.
 
-例如：
+For example:
 
-- `RAMB36E1` 可以作为基础替换任务。
-- 由多个 BRAM 组成的 Block Memory Generator，可以先替换底层 BRAM，也可以在有完整 XCI 配置时整体替换。
-- AXI Interconnect 的仲裁器、地址译码器和缓冲器通常不应仅按语法模块任意拆开；若缺少内部接口级 Testbench，应把完整 Interconnect 作为验证边界。
-- 加密 IP 内部不可见时，应把最外层可验证接口作为边界。
+- `RAMB36E1` can serve as a base replacement task.
+- A Block Memory Generator composed of multiple BRAMs can have its underlying BRAMs replaced first, or can be replaced as a whole when the full XCI configuration is available.
+- The arbiter, address decoder, and buffers of an AXI Interconnect should generally not be split apart arbitrarily by syntactic module; if there is no internal interface-level testbench, the complete Interconnect should be used as the verification boundary.
+- When the internals of encrypted IP are not visible, the outermost verifiable interface should be used as the boundary.
 
-边界选择原则为：选择“最小的、功能完整且可独立验证”的模块。
+The boundary selection principle is: choose the "smallest module that is functionally complete and independently verifiable".
 
-## 6. 替换任务模型
+## 6. Replacement task model
 
-### 6.1 任务数据结构
+### 6.1 Task data structure
 
-每个任务使用结构化描述：
+Each task uses a structured description:
 
 ```yaml
 task_id: task_0042
@@ -320,14 +320,14 @@ verification:
 status: discovered
 ```
 
-### 6.2 任务状态机
+### 6.2 Task state machine
 
-推荐状态如下：
+The recommended states are:
 
 ```text
 DISCOVERED
   → TB_CHECK
-  → BLOCKED_NO_TB 或 TB_READY
+  → BLOCKED_NO_TB or TB_READY
   → FPGA_BASELINE_RUNNING
   → FPGA_BASELINE_PASS
   → REPLACEMENT_READY
@@ -338,7 +338,7 @@ DISCOVERED
   → ACCEPTED
 ```
 
-任一步失败进入对应失败状态，例如：
+Any step that fails enters the corresponding failure state, for example:
 
 - `FPGA_BASELINE_FAIL`
 - `ASIC_COMPILE_FAIL`
@@ -347,13 +347,13 @@ DISCOVERED
 - `INTEGRATION_FAIL`
 - `MANUAL_REQUIRED`
 
-只有 `ACCEPTED` 状态的任务才能作为已验证依赖被上层任务使用。
+Only tasks in the `ACCEPTED` state may be used as verified dependencies by higher-level tasks.
 
-## 7. Testbench 准入与复用规范
+## 7. Testbench admission and reuse specification
 
-### 7.1 Testbench 分层
+### 7.1 Testbench layering
 
-推荐将验证环境拆成四层：
+The verification environment should preferably be split into four layers:
 
 ```text
 verification/<module>/
@@ -375,229 +375,229 @@ verification/<module>/
 └── tb_top.sv
 ```
 
-其中：
+Where:
 
-- `common` 中的测试、激励、监视和检查逻辑被两个仿真后端共同使用。
-- `fpga/dut_adapter.v` 实例化原 Xilinx IP。
-- `asic/dut_adapter.v` 实例化行为级替代模块。
-- 两个 Adapter 对 Testbench 暴露相同的逻辑接口。
-- 编译脚本和仿真器专用选项不进入公共验证代码。
+- The tests, stimulus, monitoring, and checking logic in `common` are shared by both simulation backends.
+- `fpga/dut_adapter.v` instantiates the original Xilinx IP.
+- `asic/dut_adapter.v` instantiates the behavioral replacement module.
+- Both adapters expose the same logical interface to the testbench.
+- Compile scripts and simulator-specific options do not enter the common verification code.
 
-### 7.2 基准结果
+### 7.2 Baseline result
 
-原始 FPGA 仿真必须先通过，才能把输出作为参考。系统保存：
+The original FPGA simulation must pass first before its output can be used as a reference. The system stores:
 
-- 工程和源文件版本摘要。
-- Xilinx 工具版本。
-- IP 配置摘要。
-- Testbench 版本。
-- 测试名称和随机种子。
-- 编译和运行参数。
-- 标准化结果文件。
-- assertion、error、warning 摘要。
-- 可选覆盖率结果。
+- Project and source file version digest.
+- Xilinx tool version.
+- IP configuration digest.
+- Testbench version.
+- Test names and random seeds.
+- Compile and run parameters.
+- Standardized result files.
+- Summary of assertions, errors, and warnings.
+- Optional coverage results.
 
-如果原始 FPGA Testbench 失败，替换任务必须停止，不能通过修改替代实现去迎合一个不稳定的参考结果。
+If the original FPGA testbench fails, the replacement task must stop; it is not allowed to accommodate an unstable reference result by modifying the replacement implementation.
 
-### 7.3 两种比较机制
+### 7.3 Two comparison mechanisms
 
-系统同时支持以下机制：
+The system supports both of the following mechanisms:
 
-#### 自检查 Testbench
+#### Self-checking testbench
 
-公共 scoreboard 在 Xilinx 和 ASIC 仿真中分别运行。两个环境都必须通过相同的功能断言和参考模型检查。
+The common scoreboard runs in the Xilinx simulation and in the ASIC simulation separately. Both environments must pass the same functional assertions and reference model checks.
 
-#### 标准化 Trace 比较
+#### Standardized trace comparison
 
-Xilinx 仿真生成 golden trace，ASIC 仿真生成 candidate trace，由独立比较器进行比较。
+The Xilinx simulation produces a golden trace, the ASIC simulation produces a candidate trace, and an independent comparator compares them.
 
-推荐标准 trace 使用逐行记录格式：
+The recommended standard trace uses a line-oriented record format:
 
 ```json
 {"event":"write","cycle":42,"addr":"00001000","data":"12345678","strb":"f"}
 {"event":"read_rsp","cycle":57,"id":3,"data":"12345678","resp":0}
 ```
 
-大型回归可以使用压缩 JSONL、CSV 或二进制事件格式，但必须保留统一的数据模型和版本号。
+Large regressions may use compressed JSONL, CSV, or a binary event format, but must preserve a unified data model and version number.
 
-### 7.4 跨仿真器一致性要求
+### 7.4 Cross-simulator consistency requirements
 
-Xilinx 仿真和 VCS 可能在 delta cycle、未知值传播和未初始化状态方面存在差异。因此比较器必须：
+Xilinx simulation and VCS may differ in delta cycles, unknown value propagation, and uninitialized state. Therefore the comparator must:
 
-- 在明确的时钟采样点记录结果。
-- 统一 reset 释放时刻。
-- 固定随机种子和测试向量。
-- 明确区分 `0/1/X/Z`。
-- 不默认把 `X` 当作任意通过值。
-- 对协议事务进行标准化，避免比较无意义的 delta-cycle 差异。
-- 记录仿真时间单位和时钟周期定义。
+- Record results at explicit clock sampling points.
+- Unify the reset release moment.
+- Fix the random seed and test vectors.
+- Distinguish `0/1/X/Z` explicitly.
+- Not treat `X` as an arbitrary pass value by default.
+- Normalize protocol transactions to avoid comparing meaningless delta-cycle differences.
+- Record simulation time units and clock period definitions.
 
-## 8. RTL 仿真结果的判定方式
+## 8. How RTL simulation results are judged
 
-所有替换验证都是 RTL 仿真：原 FPGA RTL 在 Xilinx 仿真器中运行，替换后的 RTL 在 VCS 中运行。下面的分类只表示 Testbench 和比较器如何判定两次 RTL 仿真的结果，并不表示采用了不同的仿真层次。
+All replacement verification is RTL simulation: the original FPGA RTL runs in the Xilinx simulator, and the replaced RTL runs in VCS. The classification below only indicates how the testbench and comparator judge the results of the two RTL simulations; it does not indicate that different simulation levels are used.
 
-### 8.1 信号级周期精确比较（默认方式）
+### 8.1 Signal-level cycle-exact comparison (default)
 
-对同一组输入、时钟和复位，在预先定义的采样边沿比较原实现与替代实现的输出。适用于：
+For the same set of inputs, clock, and reset, compare the outputs of the original implementation and the replacement implementation at predefined sampling edges. Applicable to:
 
-- 组合算术和逻辑单元。
-- 固定流水线 DSP。
-- BRAM、ROM 和同步 RAM。
-- Register Slice。
-- 同步 FIFO。
+- Combinational arithmetic and logic units.
+- Fixed-pipeline DSP.
+- BRAM, ROM, and synchronous RAM.
+- Register Slice.
+- Synchronous FIFO.
 
-对于组合逻辑，在同一个有效输入采样点比较输出；对于时序逻辑，要求输出有效周期、控制信号和数据逐周期一致。
+For combinational logic, compare outputs at the same valid input sampling point; for sequential logic, the output valid cycle, control signals, and data are required to match cycle by cycle.
 
-替代实现即使内部结构不同，对外可见的 pipeline 延迟也应与原设计一致。如果行为级核心的天然延迟不同，应由兼容 Wrapper 增加寄存器或控制逻辑，恢复原 IP 的外部时序。系统默认不把“固定延迟发生变化”认定为等价替换，因为这可能破坏上层 RTL。
+Even if the replacement implementation differs internally, its externally visible pipeline latency should match the original design. If the natural latency of the behavioral core differs, the compatible wrapper should add registers or control logic to restore the original IP's external timing. By default the system does not accept "a fixed latency change" as an equivalent replacement, because that may break the upper-level RTL.
 
-### 8.2 协议级功能比较（用于 AXI 等握手接口）
+### 8.2 Protocol-level functional comparison (for handshake interfaces such as AXI)
 
-AXI Interconnect、Crossbar、Width Converter 和 Clock Converter 仍然使用 RTL 仿真，只是 Testbench 通过 AXI monitor 和 scoreboard 比较完成的协议事务，而不是要求两边每一个周期的 `READY`、`VALID` 波形完全相同。
+AXI Interconnect, Crossbar, Width Converter, and Clock Converter still use RTL simulation; the testbench simply compares completed protocol transactions through an AXI monitor and scoreboard, instead of requiring the `READY` and `VALID` waveforms of both sides to be identical cycle by cycle.
 
-原因是 AXI 接口允许合法的 backpressure、buffering 和仲裁时序差异。例如两个正确的 Interconnect 可以在不同周期拉高 `READY`，但都必须完成相同的读写请求。
+The reason is that the AXI interface allows legal differences in backpressure, buffering, and arbitration timing. For example, two correct Interconnects may assert `READY` in different cycles, but both must complete the same read and write requests.
 
-协议级检查至少包括：
+Protocol-level checks include at least:
 
-- 请求不丢失、不重复。
-- 地址、数据、byte strobe 和 response 正确。
-- ID 和事务响应正确关联。
-- 每个 ID 内的顺序符合配置和协议要求。
-- burst 拆分、合并和宽度转换正确。
-- backpressure 下不发生数据损坏。
-- 不产生死锁。
-- 所有被接受的请求最终产生合法响应。
+- Requests are not lost and not duplicated.
+- Address, data, byte strobe, and response are correct.
+- ID and transaction responses are correctly associated.
+- The ordering within each ID meets configuration and protocol requirements.
+- Burst splitting, merging, and width conversion are correct.
+- No data corruption occurs under backpressure.
+- No deadlock occurs.
+- Every accepted request eventually produces a legal response.
 
-协议允许变化的只有握手和响应时间；数据内容、地址映射、顺序约束和外部协议行为仍必须一致。如果原设计规范明确要求固定响应周期，则该任务仍应采用周期精确比较。
+Only handshake and response timing are allowed to vary under the protocol; data content, address mapping, ordering constraints, and external protocol behavior must still be consistent. If the original design specification explicitly requires a fixed response cycle, that task should still use cycle-exact comparison.
 
-### 8.3 公共自检查 Testbench
+### 8.3 Shared self-checking testbench
 
-无论采用信号级还是协议级判定，优先使用同一套公共 Testbench、测试向量、随机种子、monitor、scoreboard 和功能参考模型分别运行两个 DUT。Golden trace 与 candidate trace 是跨仿真器保存证据和辅助定位差异的手段，不是替代 RTL Testbench。
+Whether signal-level or protocol-level judgment is used, the same set of common testbenches, test vectors, random seeds, monitors, scoreboards, and functional reference models should preferably be used to run the two DUTs separately. The golden trace and candidate trace are a means of preserving evidence across simulators and assisting with difference localization; they are not a replacement for the RTL testbench.
 
-### 8.4 MANUAL：人工验证
+### 8.4 MANUAL: manual verification
 
-如果既不能定义稳定的信号级比较规则，也不能定义完整的协议级 scoreboard，任务应标记为人工验证，不得显示为自动验证通过。
+If neither a stable signal-level comparison rule nor a complete protocol-level scoreboard can be defined, the task should be marked as manual verification and must not be shown as automatically verified.
 
-## 9. 自底向上的替换流程
+## 9. Bottom-up replacement flow
 
-### 9.1 可移植闭包
+### 9.1 Portable closure
 
-定义模块的“可移植闭包”状态：
+Define the "portable closure" state of a module:
 
-一个模块只有在以下条件全部满足时，才是 ASIC 仿真器可独立编译和验证的：
+A module is only independently compilable and verifiable in an ASIC simulator when all of the following hold:
 
-1. 模块自身不再依赖未处理的 Xilinx 专用实现。
-2. 所有子模块均已替换为可移植 Verilog，或者已声明为允许保留的 ASIC 黑盒。
-3. 所需行为模型可以被 VCS 编译。
-4. 模块的 Testbench 已通过准入检查。
+1. The module itself no longer depends on an unhandled Xilinx-specific implementation.
+2. All submodules have been replaced with portable Verilog, or have been declared as ASIC black boxes allowed to remain.
+3. The required behavioral models can be compiled by VCS.
+4. The module's testbench has passed the admission check.
 
-叶子模块完成替换后，可移植闭包向父节点扩展。该机制决定何时可以在 VCS 中验证更高层模块。
+After a leaf module is replaced, the portable closure expands toward its parents. This mechanism determines when a higher-level module can be verified in VCS.
 
-### 9.2 单个任务执行步骤
+### 9.2 Steps for executing a single task
 
-每个任务执行以下固定流程：
+Each task executes the following fixed flow:
 
-1. 检查所有子任务是否已经接受。
-2. 检查 Testbench 是否可复用。
-3. 使用 Xilinx 仿真器运行原始实现。
-4. 保存 golden trace、自检查结果和运行环境摘要。
-5. 从统一 IP 参数中选择行为级 Verilog 实现。
-6. 生成兼容 Wrapper 和 ASIC filelist。
-7. 执行 Verilog lint 和基础编译检查。
-8. 使用 VCS 运行相同测试集合和随机种子。
-9. 根据任务声明的 RTL 仿真结果比较策略判定结果。
-10. 运行替换后模块的完整回归。
-11. 将替代模块临时加入父模块，执行最近一级集成冒烟测试。
-12. 验证通过后接受替换，并重新计算父节点的可移植闭包。
+1. Check whether all subtasks have been accepted.
+2. Check whether the testbench is reusable.
+3. Run the original implementation with the Xilinx simulator.
+4. Save the golden trace, the self-check result, and a summary of the run environment.
+5. Select a behavioral Verilog implementation from the unified IP parameters.
+6. Generate the compatible wrapper and the ASIC filelist.
+7. Perform Verilog lint and a basic compile check.
+8. Run the same test set and random seeds with VCS.
+9. Judge the result according to the RTL simulation result comparison strategy declared by the task.
+10. Run the complete regression of the replaced module.
+11. Temporarily add the replacement module to the parent module and execute the nearest-level integration smoke test.
+12. On success, accept the replacement and recompute the portable closure of the parent node.
 
-### 9.3 混合实现验证
+### 9.3 Mixed-implementation verification
 
-已生成的替代模块是普通 Verilog，因此可以在条件允许时放回 Xilinx 仿真环境，与尚未替换的 Xilinx IP 一起运行。这种混合仿真可用于尽早发现集成问题。
+The generated replacement module is ordinary Verilog, so where conditions permit it can be put back into the Xilinx simulation environment and run together with the not-yet-replaced Xilinx IP. This mixed simulation can be used to find integration problems early.
 
-但混合仿真不能替代 VCS 验证。正式接受条件仍应包括：
+However, mixed simulation cannot replace VCS verification. The formal acceptance conditions should still include:
 
-- 原实现在 Xilinx 仿真器中通过。
-- 替代实现或其当前可移植闭包在 VCS 中通过。
-- 两端标准化结果满足声明的比较规则。
+- The original implementation passes in the Xilinx simulator.
+- The replacement implementation, or its current portable closure, passes in VCS.
+- The standardized results from both sides satisfy the declared comparison rules.
 
-### 9.4 父模块回归
+### 9.4 Parent module regression
 
-接受叶子替换后，至少运行两类回归：
+After accepting a leaf replacement, run at least two kinds of regression:
 
-- 当前任务的模块级完整回归。
-- 最近可验证父模块的集成冒烟回归。
+- The complete module-level regression of the current task.
+- The integration smoke regression of the nearest verifiable parent module.
 
-当父模块的所有依赖完成后，再运行父模块完整回归。这样可以避免在顶层全部替换结束后才发现早期集成错误。
+When all dependencies of a parent module are complete, run the complete parent module regression. This avoids discovering early integration errors only after all top-level replacements are finished.
 
-## 10. IP 行为级库要求
+## 10. IP behavioral library requirements
 
-### 10.1 通用要求
+### 10.1 General requirements
 
-每个替代 IP 必须同时提供：
+Every replacement IP must provide all of:
 
-- 可综合 Verilog 实现。
-- 参数约束和非法组合检查。
-- 功能说明。
-- 支持和不支持的配置列表。
-- 独立 Testbench。
-- 针对 Xilinx 参考实现的验证记录。
-- 预期的 RTL 仿真结果比较策略。
-- 已知差异和人工确认项。
+- A synthesizable Verilog implementation.
+- Parameter constraints and illegal combination checks.
+- A functional description.
+- A list of supported and unsupported configurations.
+- A standalone testbench.
+- Verification records against the Xilinx reference implementation.
+- The expected RTL simulation result comparison strategy.
+- Known differences and items requiring manual confirmation.
 
-### 10.2 BRAM 和 FIFO
+### 10.2 BRAM and FIFO
 
-需要明确支持：
+The following need explicit support:
 
-- Single Port、Simple Dual Port、True Dual Port。
-- 同步或异步读。
-- read-first、write-first、no-change。
-- byte enable。
-- 输出寄存器和读延迟。
-- 初始化文件。
-- 同地址双端口访问。
-- reset 对存储体或输出寄存器的影响。
-- FIFO 的 first-word fall-through 模式。
-- almost full、almost empty 和计数输出。
-- 异步 FIFO 的跨时钟同步行为。
+- Single Port, Simple Dual Port, True Dual Port.
+- Synchronous or asynchronous read.
+- read-first, write-first, no-change.
+- byte enable.
+- Output registers and read latency.
+- Initialization files.
+- Same-address dual-port access.
+- The effect of reset on the memory array or output registers.
+- FIFO first-word fall-through mode.
+- almost full, almost empty, and count outputs.
+- Cross-clock synchronization behavior of asynchronous FIFO.
 
-如果 Xilinx 模型把某种碰撞定义为未知，替代模型不得自行给出确定值来掩盖差异。
+If the Xilinx model defines a certain collision as unknown, the replacement model must not produce a determined value on its own to mask the difference.
 
 ### 10.3 DSP
 
-需要提取并验证：
+The following need to be extracted and verified:
 
-- 输入和输出位宽。
-- signed/unsigned。
-- pre-adder、multiplier、post-adder 模式。
-- 截断、舍入、饱和或回绕。
-- pipeline 级数。
-- clock enable。
-- 同步或异步 reset。
-- cascade 使用方式。
+- Input and output bit widths.
+- signed/unsigned.
+- pre-adder, multiplier, post-adder modes.
+- Truncation, rounding, saturation, or wraparound.
+- Number of pipeline stages.
+- clock enable.
+- Synchronous or asynchronous reset.
+- How cascade is used.
 
-不能仅根据模块名称把 DSP 无条件改写成 `a * b + c`。
+It is not acceptable to unconditionally rewrite a DSP into `a * b + c` based merely on the module name.
 
 ### 10.4 AXI
 
-需要区分：
+The following need to be distinguished:
 
-- AXI4、AXI4-Lite、AXI3、AXI-Stream。
-- 地址、数据和 ID 宽度。
-- burst 类型和最大长度。
-- outstanding 数量。
-- narrow 和 unaligned transfer。
-- 仲裁策略。
-- 地址映射。
-- 通道 buffering。
-- clock domain。
-- 数据宽度转换规则。
+- AXI4, AXI4-Lite, AXI3, AXI-Stream.
+- Address, data, and ID widths.
+- Burst types and maximum length.
+- Number of outstanding transactions.
+- Narrow and unaligned transfers.
+- Arbitration policy.
+- Address mapping.
+- Channel buffering.
+- Clock domain.
+- Data width conversion rules.
 
-AXI 替代模块原则上采用扁平 Verilog 端口，不依赖 SystemVerilog `interface`。
+AXI replacement modules should in principle use flattened Verilog ports and must not depend on the SystemVerilog `interface`.
 
-## 11. 仿真后端设计
+## 11. Simulation backend design
 
-### 11.1 统一后端接口
+### 11.1 Unified backend interface
 
-每个仿真后端实现统一接口：
+Every simulation backend implements a unified interface:
 
 ```text
 prepare(task, test)
@@ -608,40 +608,40 @@ collect_result(task, test, seed)
 collect_coverage(task, test, seed)
 ```
 
-统一返回：
+The unified return value:
 
-- 成功或失败状态。
-- 日志路径。
-- error 和 warning 摘要。
-- trace 路径。
-- 覆盖率路径。
-- 工具版本和运行参数。
+- Success or failure status.
+- Log path.
+- Summary of errors and warnings.
+- Trace path.
+- Coverage path.
+- Tool version and run parameters.
 
-### 11.2 Xilinx 后端
+### 11.2 Xilinx backend
 
-Xilinx 后端负责：
+The Xilinx backend is responsible for:
 
-- 编译原始 FPGA RTL 和 Xilinx 仿真模型。
-- 使用 Vivado/XSim 工具链进行 elaboration 和仿真。
-- 保留 Vivado 工程定义的宏、include、IP 库和编译顺序。
-- 生成原实现的 golden trace。
+- Compiling the original FPGA RTL and the Xilinx simulation models.
+- Using the Vivado/XSim toolchain for elaboration and simulation.
+- Preserving the macros, includes, IP libraries, and compile order defined by the Vivado project.
+- Producing the golden trace of the original implementation.
 
-后端应通过脚本适配器封装 `xvlog`、`xelab`、`xsim` 或 Vivado batch flow，主调度器不直接拼接工具命令。
+The backend should wrap `xvlog`, `xelab`, `xsim`, or the Vivado batch flow through a script adapter; the main scheduler does not assemble tool commands directly.
 
-### 11.3 ASIC 后端
+### 11.3 ASIC backend
 
-第一版 ASIC 后端以 VCS 为主，负责：
+The first version of the ASIC backend is based mainly on VCS, and is responsible for:
 
-- 编译行为级 Verilog、ASIC Adapter 和公共 Testbench。
-- 使用与 Xilinx 基准相同的测试列表和随机种子。
-- 生成 candidate trace。
-- 输出编译、仿真和覆盖率结果。
+- Compiling the behavioral Verilog, the ASIC adapter, and the common testbench.
+- Using the same test list and random seeds as the Xilinx baseline.
+- Producing the candidate trace.
+- Emitting compile, simulation, and coverage results.
 
-接口设计应允许后续增加其他 ASIC 仿真器，而不修改任务模型。
+The interface design should allow other ASIC simulators to be added later without modifying the task model.
 
-## 12. 调度算法
+## 12. Scheduling algorithm
 
-任务调度器的基本逻辑如下：
+The basic logic of the task scheduler is as follows:
 
 ```text
 build_dependency_dag()
@@ -679,11 +679,11 @@ while unfinished_tasks_exist:
         update_portable_closure(task.parents)
 ```
 
-如果所有剩余任务都被阻塞，调度器停止，并输出阻塞链条，不能无限重试。
+If all remaining tasks are blocked, the scheduler stops and emits the blocking chain; it must not retry indefinitely.
 
-## 13. 输出物
+## 13. Outputs
 
-建议输出目录如下：
+The recommended output directory is as follows:
 
 ```text
 build/<project>/
@@ -715,50 +715,50 @@ build/<project>/
     └── verification_evidence.html
 ```
 
-## 14. 报告要求
+## 14. Reporting requirements
 
-### 14.1 项目级报告
+### 14.1 Project-level report
 
-项目级报告至少包含：
+The project-level report contains at least:
 
-- 总模块数和总实例数。
-- FPGA IP 数量和类型分布。
-- 替换任务 DAG。
-- 已接受、失败、阻塞和人工处理任务数量。
-- 当前最高可移植层次。
-- 顶层是否已经形成完整可移植闭包。
-- 所有仿真工具和版本。
-- 所有自动替换的验证证据索引。
+- Total number of modules and total number of instances.
+- FPGA IP count and type distribution.
+- Replacement task DAG.
+- Number of accepted, failed, blocked, and manually handled tasks.
+- The current highest portable level.
+- Whether the top level has formed a complete portable closure.
+- All simulation tools and versions.
+- An index of verification evidence for all automatic replacements.
 
-### 14.2 任务级报告
+### 14.2 Task-level report
 
-每个任务至少记录：
+Each task records at least:
 
-- 原实例和层次路径。
-- 原 IP 类型、版本和参数。
-- 识别置信度。
-- 替换实现和版本。
-- Testbench 准入结果。
-- Xilinx 基准仿真结果。
-- VCS 仿真结果。
-- RTL 仿真结果比较策略和比较结果。
-- 运行测试、随机种子和覆盖率。
-- 已知差异。
-- 是否完成父模块集成验证。
+- Original instance and hierarchy path.
+- Original IP type, version, and parameters.
+- Recognition confidence.
+- Replacement implementation and version.
+- Testbench admission result.
+- Xilinx baseline simulation result.
+- VCS simulation result.
+- RTL simulation result comparison strategy and comparison result.
+- Tests run, random seeds, and coverage.
+- Known differences.
+- Whether parent module integration verification has been completed.
 
-### 14.3 人工处理报告
+### 14.3 Manual-handling report
 
-人工任务报告必须说明：
+A manual task report must state:
 
-- 无法替换还是无法验证。
-- 缺失的配置、源码或 Testbench。
-- 未支持的具体功能参数。
-- 受影响的父模块和顶层功能。
-- 建议的人工替代接口。
-- 自动生成的 Verilog 空壳和端口定义。
-- 完成人工处理后应重新执行的回归集合。
+- Whether it cannot be replaced or cannot be verified.
+- Missing configuration, source code, or testbench.
+- The specific unsupported functional parameters.
+- The affected parent modules and top-level functionality.
+- A suggested manual replacement interface.
+- The automatically generated Verilog shell and port definitions.
+- The regression set that should be re-run after the manual work is completed.
 
-## 15. 推荐工程目录
+## 15. Recommended project directory
 
 ```text
 fpga-ip-converter/
@@ -801,165 +801,165 @@ fpga-ip-converter/
 └── tests/
 ```
 
-## 16. 命令行接口建议
+## 16. Command-line interface proposal
 
 ```bash
-# 功能一：独立生成RTL设计清单；已有提取器可替代此命令
+# Capability 1: generate the RTL design manifest standalone; an existing extractor can replace this command
 rtl-manifest -c project.toml
 
-# 功能二：只读取设计清单，生成IP替换任务DAG
+# Capability 2: read only the design manifest and generate the IP replacement task DAG
 ipverify -c project.toml plan
 
-# 检查所有任务的Testbench准入状态
+# Check the testbench admission status of all tasks
 ipverify -c project.toml check-tb
 
-# 为指定任务生成Xilinx基准结果
+# Generate the Xilinx baseline result for a specified task
 ipverify -c project.toml baseline task_0042
 
-# 替换并验证指定任务
+# Replace and verify a specified task
 ipverify -c project.toml replace task_0042
 
-# 自底向上自动处理所有当前可执行任务
+# Automatically process all currently executable tasks bottom-up
 ipverify -c project.toml run
 
-# 生成项目级报告
+# Generate the project-level report
 ipverify -c project.toml report
 ```
 
-## 17. MVP 开发计划
+## 17. MVP development plan
 
-### 阶段一：验证基础设施
+### Phase 1: verification infrastructure
 
-目标：先证明同一验证源能够跨 Xilinx 仿真器和 VCS 稳定工作。
+Goal: first prove that the same verification source can work stably across the Xilinx simulator and VCS.
 
-交付内容：
+Deliverables:
 
-- Testbench 目录和接口规范。
-- Xilinx 仿真后端。
-- VCS 仿真后端。
-- 标准 trace 格式。
-- RTL 仿真的信号级和协议级比较器。
-- 运行环境与证据归档。
+- Testbench directory and interface specification.
+- Xilinx simulation backend.
+- VCS simulation backend.
+- Standard trace format.
+- Signal-level and protocol-level comparators for RTL simulation.
+- Run environment and evidence archiving.
 
-验收条件：
+Acceptance criteria:
 
-- 同一组测试和种子可以在两个后端运行。
-- 人为注入的功能差异能够被比较器检测。
-- 仿真结果可以重复生成。
+- The same set of tests and seeds can run on both backends.
+- Artificially injected functional differences can be detected by the comparator.
+- Simulation results can be reproduced.
 
-### 阶段二：项目解析与任务 DAG
+### Phase 2: project parsing and task DAG
 
-交付内容：
+Deliverables:
 
-- Vivado 工程和 filelist 导入。
-- 模块层次展开。
-- Xilinx IP 和原语识别。
-- 替换边界分析。
-- 自底向上的任务调度器。
-- Testbench 缺失和阻塞链报告。
+- Vivado project and filelist import.
+- Module hierarchy elaboration.
+- Xilinx IP and primitive recognition.
+- Replacement boundary analysis.
+- Bottom-up task scheduler.
+- Missing-testbench and blocking-chain reports.
 
-验收条件：
+Acceptance criteria:
 
-- 能从代表性工程生成稳定、可追溯的任务 DAG。
-- 所有任务都能关联回源文件、实例路径和配置文件。
+- A stable, traceable task DAG can be generated from a representative project.
+- Every task can be linked back to its source files, instance path, and configuration file.
 
-### 阶段三：BRAM、FIFO 和 DSP
+### Phase 3: BRAM, FIFO, and DSP
 
-交付内容：
+Deliverables:
 
-- 基础行为级 Verilog 库。
-- XCI 参数到统一参数的转换规则。
-- 兼容 Wrapper 生成。
-- 周期精确 RTL 验证；若内部实现延迟不同，由兼容 Wrapper 恢复原 IP 的外部时序。
+- Base behavioral Verilog library.
+- Conversion rules from XCI parameters to unified parameters.
+- Compatible wrapper generation.
+- Cycle-exact RTL verification; if the internal implementation latency differs, the compatible wrapper restores the original IP's external timing.
 
-验收条件：
+Acceptance criteria:
 
-- 所有宣称支持的参数组合都有独立回归。
-- 自动接受的每个替换都有 Xilinx/VCS 对比证据。
+- Every parameter combination claimed to be supported has a standalone regression.
+- Every automatically accepted replacement has Xilinx/VCS comparison evidence.
 
-### 阶段四：AXI 基础模块
+### Phase 4: basic AXI modules
 
-建议顺序：
+Suggested order:
 
-1. AXI Register Slice。
-2. AXI4-Lite Interconnect。
-3. AXI Data Width Converter。
-4. AXI Clock Converter。
-5. 受限配置的 AXI4 Crossbar/Interconnect。
+1. AXI Register Slice.
+2. AXI4-Lite Interconnect.
+3. AXI Data Width Converter.
+4. AXI Clock Converter.
+5. AXI4 Crossbar/Interconnect with restricted configurations.
 
-交付内容：
+Deliverables:
 
-- AXI 公共驱动器和监视器。
-- 事务级 trace。
-- ID、顺序、burst、backpressure 和死锁检查。
-- AXI 支持能力矩阵。
+- Common AXI driver and monitor.
+- Transaction-level trace.
+- ID, ordering, burst, backpressure, and deadlock checks.
+- AXI support capability matrix.
 
-### 阶段五：父模块和顶层闭包
+### Phase 5: parent modules and top-level closure
 
-交付内容：
+Deliverables:
 
-- 混合实现回归。
-- 父模块自动回归。
-- 可移植闭包计算。
-- 顶层可移植 Verilog 工程输出。
-- 完整人工处理报告。
+- Mixed-implementation regression.
+- Automatic parent module regression.
+- Portable closure computation.
+- Top-level portable Verilog project output.
+- Complete manual-handling report.
 
-## 18. 主要风险及控制措施
+## 18. Main risks and controls
 
-### 18.1 Testbench 存在但验证能力不足
+### 18.1 A testbench exists but its verification capability is insufficient
 
-控制措施：
+Controls:
 
-- 为每类 IP 定义最低测试场景和覆盖要求。
-- 对 Testbench 做故障注入或 mutation test，确认错误能被检测。
-- 不以“仿真运行结束”作为验证通过标准。
+- Define the minimum test scenarios and coverage requirements for each IP class.
+- Perform fault injection or mutation tests on the testbench to confirm that errors can be detected.
+- Do not use "the simulation finished" as the criterion for passing verification.
 
-### 18.2 两个仿真器产生表面差异
+### 18.2 The two simulators produce surface-level differences
 
-控制措施：
+Controls:
 
-- 使用时钟边沿或事务边界采样。
-- 标准化 X/Z 和时间语义。
-- 把仿真器专用模型限制在 Adapter 内。
-- 记录全部工具版本和编译选项。
+- Sample at clock edges or transaction boundaries.
+- Normalize X/Z and time semantics.
+- Restrict simulator-specific models to the adapter.
+- Record all tool versions and compile options.
 
-### 18.3 过度拆分导致无法独立验证
+### 18.3 Excessive splitting makes independent verification impossible
 
-控制措施：
+Controls:
 
-- 以“最小功能完整、可独立验证模块”为拆分边界。
-- 同时保留实例层次图和替换任务 DAG。
-- 允许将多个底层节点合并成一个复合替换任务。
+- Use "the smallest functionally complete, independently verifiable module" as the splitting boundary.
+- Keep both the instance hierarchy graph and the replacement task DAG.
+- Allow multiple lower-level nodes to be merged into one composite replacement task.
 
-### 18.4 AXI 实现并非周期精确
+### 18.4 The AXI implementation is not cycle-exact
 
-控制措施：
+Controls:
 
-- 明确使用事务级等价。
-- 对 ordering、ID、burst 和 backpressure 建立独立检查器。
-- 报告中明确说明允许的时序差异。
+- Explicitly use transaction-level equivalence.
+- Build independent checkers for ordering, ID, burst, and backpressure.
+- State clearly in the report which timing differences are allowed.
 
-### 18.5 累积替换错误在高层才暴露
+### 18.5 Accumulated replacement errors surface only at high levels
 
-控制措施：
+Controls:
 
-- 每次接受叶子替换后运行最近父模块的冒烟测试。
-- 父模块形成可移植闭包后立即运行完整 VCS 回归。
-- 保存每个接受点，支持回退到最近通过状态。
+- Run the smoke test of the nearest parent module after each accepted leaf replacement.
+- Run the complete VCS regression immediately once a parent module forms a portable closure.
+- Save each acceptance point to support rolling back to the most recent passing state.
 
-## 19. 最终验收定义
+## 19. Final acceptance definition
 
-一个项目只有同时满足以下条件，才能标记为“自动转换完成”：
+A project can only be marked as "automatic conversion complete" when all of the following hold:
 
-1. 顶层设计已经形成完整可移植闭包。
-2. 所有自动替换任务都有可复用 Testbench。
-3. 原实现在 Xilinx 仿真器中的基准测试全部通过。
-4. 替代实现在 VCS 中的对应测试全部通过。
-5. 所有任务通过其声明的 RTL 仿真结果判定规则。
-6. 所有父模块和顶层集成回归通过。
-7. 输出 RTL 的可综合部分符合约定的 Verilog 编码子集。
-8. 不存在未披露的 Xilinx 原语或 IP 依赖。
-9. 所有允许保留的黑盒和人工处理模块均被明确列出。
-10. 工具版本、测试、种子、日志和比较证据均可追溯。
+1. The top-level design has formed a complete portable closure.
+2. Every automatic replacement task has a reusable testbench.
+3. The baseline tests of the original implementation in the Xilinx simulator all pass.
+4. The corresponding tests of the replacement implementation in VCS all pass.
+5. Every task passes the RTL simulation result judgment rule it declares.
+6. All parent module and top-level integration regressions pass.
+7. The synthesizable part of the output RTL conforms to the agreed Verilog coding subset.
+8. No undisclosed Xilinx primitive or IP dependency remains.
+9. All black boxes and manual-handling modules that are allowed to remain are explicitly listed.
+10. Tool versions, tests, seeds, logs, and comparison evidence are all traceable.
 
-如果顶层仍包含人工任务，系统应输出“部分转换完成”，并明确当前最高可移植层次和剩余阻塞链，而不是给出误导性的成功结论。
+If the top level still contains manual tasks, the system should output "partially converted" and clearly state the current highest portable level and the remaining blocking chain, rather than giving a misleading success conclusion.
