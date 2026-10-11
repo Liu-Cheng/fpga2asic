@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fpga2asic.local/schemas/design-manifest.schema.json",
+  "title": "RTL design manifest",
+  "type": "object",
+  "required": ["schema_version", "top", "source_files", "modules", "hierarchy"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "top": {"type": "string", "minLength": 1},
+    "source_files": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "modules": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/module"}
+    },
+    "hierarchy": {"$ref": "#/$defs/hierarchyNode"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "instance": {
+      "type": "object",
+      "required": ["module", "name", "parameters", "ports", "source_line"],
+      "properties": {
+        "module": {"type": "string"},
+        "name": {"type": "string"},
+        "parameters": {"type": "string"},
+        "ports": {"type": "string"},
+        "source_line": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "module": {
+      "type": "object",
+      "required": ["name", "source", "start_line", "instances"],
+      "properties": {
+        "name": {"type": "string"},
+        "source": {"type": "string"},
+        "start_line": {"type": "integer", "minimum": 1},
+        "instances": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/instance"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "hierarchyNode": {
+      "type": "object",
+      "required": ["path", "module", "instance", "source", "recursive_reference", "children"],
+      "properties": {
+        "path": {"type": "string"},
+        "module": {"type": "string"},
+        "instance": {"type": "string"},
+        "source": {"type": ["string", "null"]},
+        "recursive_reference": {"type": "boolean"},
+        "children": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/hierarchyNode"}
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

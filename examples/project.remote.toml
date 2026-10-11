@@ -1,0 +1,65 @@
+[project]
+name = "demo_soc"
+root = ".."
+top = "soc_top"
+sources = ["rtl/**/*.v", "rtl/**/*.sv"]
+include_dirs = ["rtl/include"]
+defines = ["FPGA_BUILD"]
+build_dir = "build/fpga2asic"
+design_manifest = "build/rtl-analysis/design-manifest.json"
+
+# Additional project-specific patterns can be supplied here. Built-in patterns
+# already cover common RAMB, DSP48, XPM, AXI, block-memory and FIFO names.
+ip_patterns = [
+  "^RAMB\\w*$",
+  "^DSP48\\w*$",
+  "^xpm_\\w+$",
+  "^(axi|axis)_\\w+$",
+  "^blk_mem_gen\\w*$",
+  "^fifo_generator\\w*$",
+]
+
+[verification]
+manifests_dir = "verification/tasks"
+
+[servers.xilinx_server]
+type = "ssh"
+host = "192.0.2.10"
+user = "eda"
+port = 22
+work_root = "/data/fpga2asic/jobs"
+ssh_executable = "ssh"
+scp_executable = "scp"
+ssh_options = ["-o", "BatchMode=yes"]
+
+[servers.asic_server]
+type = "ssh"
+host = "192.0.2.20"
+user = "eda"
+port = 22
+work_root = "/data/fpga2asic/jobs"
+ssh_options = ["-o", "BatchMode=yes"]
+
+[tools.xilinx]
+server = "xilinx_server"
+command = "bash tool/0000_run_xsim.sh {top} {test} {seed} {trace} {filelist} {include_dirs}"
+support_files = ["scripts/remote/run_xsim.sh"]
+artifacts = ["trace.jsonl", "xsim.log"]
+timeout_seconds = 7200
+
+[tools.xilinx.environment]
+XILINX_XVLOG = "/opt/Xilinx/Vivado/bin/xvlog"
+XILINX_XELAB = "/opt/Xilinx/Vivado/bin/xelab"
+XILINX_XSIM = "/opt/Xilinx/Vivado/bin/xsim"
+XILINX_XELAB_ARGS = "-L xil_defaultlib -L xpm"
+
+[tools.vcs]
+server = "asic_server"
+command = "bash tool/0000_run_vcs.sh {top} {test} {seed} {trace} {filelist} {include_dirs}"
+support_files = ["scripts/remote/run_vcs.sh"]
+artifacts = ["trace.jsonl", "simv.log"]
+timeout_seconds = 7200
+
+[tools.vcs.environment]
+VCS_BIN = "/tools/synopsys/vcs/bin/vcs"
+VCS_COMPILE_ARGS = "+lint=all"
