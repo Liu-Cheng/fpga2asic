@@ -18,16 +18,16 @@ def render_report(project: ProjectConfig, tasks: list[ReplacementTask]) -> str:
         except ManifestError:
             pass
     lines = [
-        f"# {project.name} FPGA IP 替换报告",
+        f"# {project.name} FPGA IP replacement report",
         "",
-        "## 汇总",
+        "## Summary",
         "",
-        f"- 顶层模块：`{project.top or manifest_top or 'unknown'}`",
-        f"- 替换任务总数：{len(tasks)}",
-        f"- 已接受：{accepted}",
-        f"- 完成率：{accepted / len(tasks):.1%}" if tasks else "- 完成率：100.0%",
+        f"- Top module: `{project.top or manifest_top or 'unknown'}`",
+        f"- Replacement tasks: {len(tasks)}",
+        f"- Accepted: {accepted}",
+        f"- Completion: {accepted / len(tasks):.1%}" if tasks else "- Completion: 100.0%",
         "",
-        "| 状态 | 数量 |",
+        "| Status | Count |",
         "|---|---:|",
     ]
     for status, count in sorted(counts.items()):
@@ -35,9 +35,9 @@ def render_report(project: ProjectConfig, tasks: list[ReplacementTask]) -> str:
     lines.extend(
         [
             "",
-            "## 任务",
+            "## Tasks",
             "",
-            "| 任务 | 实例 | 类型 | 依赖 | 状态 |",
+            "| Task | Instance | Kind | Dependencies | Status |",
             "|---|---|---|---|---|",
         ]
     )
@@ -50,19 +50,19 @@ def render_report(project: ProjectConfig, tasks: list[ReplacementTask]) -> str:
             for note in task.notes:
                 lines.append(f"<!-- {task.task_id}: {note.replace('--', '—')} -->")
     manual = [task for task in tasks if task.status != TaskStatus.ACCEPTED]
-    lines.extend(["", "## 待处理事项", ""])
+    lines.extend(["", "## Open items", ""])
     if not manual:
-        lines.append("所有替换任务均已通过验证。")
+        lines.append("All replacement tasks have passed verification.")
     else:
         for task in manual:
             lines.append(f"### {task.task_id} — `{task.instance_path}`")
             lines.append("")
-            lines.append(f"当前状态：`{task.status.value}`")
+            lines.append(f"Current status: `{task.status.value}`")
             lines.append("")
             if task.notes:
                 lines.extend(f"- {note}" for note in task.notes)
             else:
-                lines.append("- 尚未执行。")
+                lines.append("- Not executed yet.")
             lines.append("")
     return "\n".join(lines) + "\n"
 
