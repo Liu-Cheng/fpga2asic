@@ -1,45 +1,54 @@
 # fpga2asic
 
-这是一个验证驱动的 FPGA 数字 IP 替换工具 MVP。代码明确分为两个独立功能：RTL 提取器只输出标准设计清单，IP 验证工具只读取该清单、生成替换任务，并把原始 FPGA RTL 和替代 Verilog 分别提交到 Xilinx、VCS 仿真服务器。
+A verification-driven **FPGA digital IP replacement** tool (MVP).
+
+The codebase is deliberately split into two independent capabilities:
+
+- **RTL extractor** — emits only a standard *design manifest*.
+- **IP verification tool** — only consumes that manifest, plans replacement tasks, and submits the
+  original FPGA RTL and the replacement Verilog to **Xilinx** and **VCS** simulation servers respectively.
 
 ```text
-已有RTL子模块提取器 或 rtl-manifest
+existing RTL submodule extractor   or   rtl-manifest
                  │
                  ▼
-       design-manifest.json
+        design-manifest.json
                  │
                  ▼
-      ipverify：任务规划与远程验证
+   ipverify: task planning and remote verification
 ```
 
-`ipverify` 不调用 RTL 解析器。将来已有 repo 的子模块提取代码只要输出 `schemas/design-manifest.schema.json` 定义的数据，就可以完全替换本项目附带的轻量 `rtl-manifest`。
+`ipverify` never calls an RTL parser. Any existing repository that already extracts submodules can
+completely replace the lightweight `rtl-manifest` shipped here, as long as it emits the data defined by
+`schemas/design-manifest.schema.json`.
 
-当前版本包含：
+**This version includes:**
 
-- 独立的 Verilog 模块与实例层次提取命令。
-- 版本化的 `design-manifest.json` 接口。
-- 可配置的 FPGA IP 识别规则。
-- 自底向上的替换任务和持久化状态。
-- Testbench manifest 准入检查。
-- 本地执行器和基于 SSH/SCP 的远程执行器。
-- 可配置 Xilinx/VCS 命令、环境变量、服务器 IP 和软件路径。
-- 仿真输入打包、远程执行、trace 与日志回传。
-- 信号级周期精确比较和 AXI 事务级比较。
-- Markdown 项目报告。
+- A standalone Verilog module/instance hierarchy extraction command.
+- A versioned `design-manifest.json` interface.
+- Configurable FPGA IP recognition rules.
+- Bottom-up replacement tasks with persistent state.
+- Testbench manifest admission checks.
+- A local executor and an SSH/SCP-based remote executor.
+- Configurable Xilinx/VCS commands, environment variables, server addresses, and tool paths.
+- Simulation input packaging, remote execution, and trace/log retrieval.
+- Signal-level cycle-exact comparison and AXI transaction-level comparison.
+- A Markdown project report.
 
-## 快速开始
+## Quick start
 
-本项目只依赖 Python 3.11 或更高版本的标准库。
+The project depends only on the Python 3.11+ standard library.
 
-第一步由独立提取器生成设计清单：
+**Step 1 — generate the design manifest with the standalone extractor:**
 
 ```bash
 rtl-manifest -c project.toml
 ```
 
-如果已有 repo 已经完成子模块提取，可以跳过这一步，直接让它输出配置项 `design_manifest` 指向的文件。
+If an existing repository already performs submodule extraction, skip this step and have it emit the
+file referenced by the `design_manifest` configuration key.
 
-第二步由验证工具读取清单：
+**Step 2 — let the verification tool consume the manifest:**
 
 ```bash
 ipverify -c project.toml plan
@@ -49,46 +58,46 @@ ipverify -c project.toml run
 ipverify -c project.toml report
 ```
 
-源码位于 `src` 时，可先安装开发版本：
+To work from the `src` tree, install the development version first:
 
 ```bash
 python -m pip install -e .
 ```
 
-也可以不安装：
+Or run it without installing:
 
 ```bash
-set PYTHONPATH=src
+export PYTHONPATH=src          # Linux/macOS
+set PYTHONPATH=src             # Windows
 python -m fpga2asic.extract_cli -c project.toml
 python -m fpga2asic -c project.toml plan
 ```
 
-Linux/macOS 使用 `export PYTHONPATH=src`。
+## Example: BRAM replacement (behavioral equivalence before/after)
 
-## 示例：BRAM 替换（转换前后行为一致）
+A **minimal, runnable** example that shows what the tool does: replace an FPGA-specific IP
+(Xilinx Block RAM) with **vendor-neutral, ASIC-synthesizable** behavioral Verilog while keeping the
+behavior identical.
 
-用一个**最小可跑**的例子说明这套工具在做什么——把 FPGA 专用 IP（Xilinx Block RAM）
-替换为**厂商无关、可 ASIC 综合**的行为级 Verilog，并保证行为一致。
+### The core idea
 
-### 核心思路
-
-```
-FPGA 侧：设计实例化 blk_mem_gen_0  → 内部是 RAMB36E1 原语（ASIC 不可综合）
-                    │ 替换
+```text
+FPGA side: the design instantiates blk_mem_gen_0  →  internally a RAMB36E1 primitive (not ASIC synthesizable)
+                    │ replace
                     ▼
-ASIC 侧：生成【同名、同端口】的兼容 Wrapper → 内部接【可移植行为级模型】
+ASIC side: generate a compatible wrapper with the SAME module name and ports → instantiating a portable behavioral model
 ```
 
-- 保留**模块名与端口** → 上层 RTL、Testbench、脚本**一行都不用改**
-- 内部换成行为级实现 → **无厂商依赖，可综合到 ASIC**
-- 保持**对外可见时序**一致（读延迟、read-first 语义等）
+- **Module name and ports are preserved** → the upper-level RTL, the testbench, and scripts need **no changes at all**.
+- The internals are swapped for a behavioral implementation → **no vendor dependency, synthesizable for ASIC**.
+- **Externally visible timing is preserved** (read latency, read-first semantics, etc.).
 
-### 代码对照
+### Before / after
 
-**转换前（`examples/bram_demo/fpga/blk_mem_gen_0.v`）**——内部走厂商原语：
+**Before** (`examples/bram_demo/fpga/blk_mem_gen_0.v`) — internally a vendor primitive:
 
 ```verilog
-module blk_mem_gen_0 ( /* 端口同上 */ );
+module blk_mem_gen_0 ( /* same ports */ );
   RAMB36E1 #(
     .WIDTH(32), .DEPTH(1024), .READ_LATENCY(1), .WRITE_MODE("read_first")
   ) u_ramb36e1 (
@@ -99,10 +108,10 @@ module blk_mem_gen_0 ( /* 端口同上 */ );
 endmodule
 ```
 
-**转换后（`examples/bram_demo/asic/blk_mem_gen_0.v`）**——同名同端口，内部换成可移植模型：
+**After** (`examples/bram_demo/asic/blk_mem_gen_0.v`) — same name and ports, portable model inside:
 
 ```verilog
-module blk_mem_gen_0 ( /* 端口同上 */ );
+module blk_mem_gen_0 ( /* same ports */ );
   portable_true_dual_port_ram #(
     .WIDTH(32), .DEPTH(1024), .ADDR_W(10),
     .READ_LATENCY(1), .WRITE_MODE("read_first")
@@ -113,43 +122,44 @@ module blk_mem_gen_0 ( /* 端口同上 */ );
 endmodule
 ```
 
-### 运行示例
+### Running the example
 
-依赖：`iverilog` / `vvp`（Icarus Verilog）。**无需 Xilinx 或 VCS。**
+Requires `iverilog` / `vvp` (Icarus Verilog). **No Xilinx or VCS installation is needed.**
 
 ```bash
 cd examples/bram_demo
 ./run_demo.sh
 ```
 
-预期输出：
+Expected output:
 
 ```
-== 编译【转换前 · FPGA 侧】(厂商原语路径) ==
-== 编译【转换后 · ASIC 侧】(兼容 Wrapper + 可移植模型) ==
-== 比较两份 trace ==
-✅ 行为一致：两份 trace 完全相同（29 行）
+== Build [BEFORE - FPGA side] (vendor primitive path) ==
+== Build [AFTER  - ASIC side] (compatible wrapper + portable model) ==
+== Compare the two traces ==
+PASS: identical behavior - both traces are byte-identical (29 lines)
 ```
 
-### 示例覆盖的语义点
+### Semantics covered by the example
 
-| # | 语义点 | 为什么关键 |
+| # | Semantic point | Why it matters |
 |---|---|---|
-| 1 | 全字写 + **1 周期读延迟** | 延迟不一致会破坏上层时序 |
-| 2 | **read-first**（同地址写入时，同拍读出旧值） | 写后读语义是 IP 替换最常见的坑 |
-| 3 | **byte enable** 部分写 | 分字节写不能整字覆盖 |
-| 4 | 双端口独立读 | 两端口必须共享同一存储体 |
-| 5 | B 口写 → A 口读（跨端口可见） | 端口间一致性 |
+| 1 | Full-word write + **1-cycle read latency** | A latency mismatch breaks the upper-level timing |
+| 2 | **read-first** (when writing an address, the same cycle reads the *old* value) | Read-after-write semantics are the most common IP-replacement pitfall |
+| 3 | **Byte-enable** partial writes | Partial writes must not overwrite the whole word |
+| 4 | Independent dual-port reads | Both ports must share the same memory array |
+| 5 | Write on port B → read on port A (cross-port visibility) | Consistency between ports |
 
-详细说明与边界声明见 [`examples/bram_demo/README.md`](examples/bram_demo/README.md)。
+See [`examples/bram_demo/README.md`](examples/bram_demo/README.md) for details and the boundary statement.
 
-> ⚠️ 示例中的 `RAMB36E1` 是**行为等价子集 stub**，仅为在没有 Xilinx 仿真库的机器上跑通流程；
-> 正式验证应换成 **Vivado 生成的 IP 仿真模型**（Xilinx 跑参考实现，VCS 跑替代实现），
-> 并采用**信号级 cycle-exact 比较**（AXI 类接口用事务级比较）。
+> ⚠️ The `RAMB36E1` used in the example is a **behaviorally equivalent subset stub**, only so the flow
+> can run on a machine without the Xilinx simulation libraries. Production verification should use the
+> **Vivado-generated IP simulation model** (reference implementation on the Xilinx simulator, replacement
+> implementation on VCS) with **signal-level cycle-exact comparison** (transaction-level for AXI interfaces).
 
-## 远程服务器配置
+## Remote server configuration
 
-参考 `examples/project.remote.toml`。Xilinx 和 VCS 可以配置在不同服务器：
+See `examples/project.remote.toml`. Xilinx and VCS can live on different servers:
 
 ```toml
 [servers.xilinx_server]
@@ -165,7 +175,7 @@ user = "eda"
 work_root = "/data/fpga2asic/jobs"
 ```
 
-工具命令、软件路径和环境变量独立配置：
+Tool commands, software paths, and environment variables are configured independently:
 
 ```toml
 [tools.xilinx]
@@ -177,27 +187,32 @@ support_files = ["scripts/remote/run_xsim.sh"]
 XILINX_XVLOG = "/opt/Xilinx/Vivado/bin/xvlog"
 ```
 
-SSH 登录建议使用密钥和 `BatchMode=yes`。远程执行失败时，服务器工作目录默认保留，报告会给出位置，便于登录服务器排查。
+SSH login should use keys with `BatchMode=yes`. When a remote run fails, the server-side working
+directory is kept by default and the report points to its location so you can log in and investigate.
 
-## 两个功能的接口边界
+## Interface boundary between the two capabilities
 
-### RTL提取功能
+### RTL extraction
 
-输入：RTL源文件、顶层模块、include和宏配置。
+**Input:** RTL source files, top module, include directories, and macro definitions.
 
-输出：`design-manifest.json`，包括模块定义、实例关系、源文件位置和完整层次树。它不识别待替换IP，不创建验证任务，也不调用仿真器。
+**Output:** `design-manifest.json` containing module definitions, instance relationships, source file
+locations, and the full hierarchy tree. It does **not** recognize IP to be replaced, does not create
+verification tasks, and does not invoke simulators.
 
-### IP替换验证功能
+### IP replacement verification
 
-输入：`design-manifest.json`、IP识别规则、Testbench manifest和远程服务器配置。
+**Input:** `design-manifest.json`, IP recognition rules, testbench manifests, and remote server configuration.
 
-输出：替换任务DAG、Xilinx/VCS仿真结果、比较结果和项目报告。它不读取或解析RTL来重建层次。
+**Output:** the replacement task DAG, Xilinx/VCS simulation results, comparison results, and the project
+report. It does **not** read or parse RTL to rebuild the hierarchy.
 
-接口的JSON Schema位于 `schemas/design-manifest.schema.json`。
+The JSON Schema for the interface lives in `schemas/design-manifest.schema.json`.
 
 ## Testbench manifest
 
-运行 `ipverify plan` 后，每个任务都会生成一个 `.toml.example`。复制为 `.toml` 并填写公共 Testbench、原始 FPGA 文件和 ASIC 替代文件：
+After running `ipverify plan`, every task gets a `.toml.example`. Copy it to `.toml` and fill in the
+common testbench, the original FPGA files, and the ASIC replacement files:
 
 ```toml
 module = "blk_mem_gen_0"
@@ -215,24 +230,36 @@ fpga_files = ["vivado/ip/blk_mem_gen_0.v"]
 asic_files = ["replacements/blk_mem_gen_0.v"]
 ```
 
-AXI 模块将 `comparison` 设置为 `axi_transaction`。Testbench monitor 应输出已经完成的标准化 AXI 事务；比较器忽略合法的周期差异，但检查数据、地址、ID、响应以及每个 ID 内的顺序。
+For AXI modules, set `comparison` to `axi_transaction`. The testbench monitor should emit completed,
+normalized AXI transactions; the comparator ignores legal cycle differences but checks data, address,
+ID, response, and the ordering within each ID.
 
-## Trace 格式
+## Trace format
 
-信号级比较逐条、逐字段精确比较：
+Signal-level comparison is exact, item by item and field by field:
 
 ```json
 {"cycle": 10, "valid": 1, "data": "0000002a"}
 ```
 
-AXI 事务记录示例：
+Example AXI transaction record:
 
 ```json
 {"event":"write","cycle":42,"id":3,"addr":"00001000","data":"12345678","strb":"f","resp":0}
 ```
 
-AXI 比较会忽略 `cycle`、`time` 等时间字段，并按事务类型和 ID 保持各自的顺序进行比较。
+AXI comparison ignores time fields such as `cycle` and `time`, and compares each transaction type and
+ID while preserving their respective ordering.
 
-## 当前 MVP 边界
+## Current MVP boundaries
 
-附带的 `rtl-manifest` 是轻量级层次扫描器，适合建立流程和处理常规模块实例。复杂宏、深度 generate、interface 和完整 SystemVerilog elaboration 应由已有子模块提取器、Surelog/UHDM 或其他正式前端负责。远程验证功能只依赖标准设计清单，不依赖附带前端。
+The bundled `rtl-manifest` is a lightweight hierarchy scanner: good enough to bootstrap the flow and to
+handle regular module instantiations. Complex macros, deep `generate` blocks, interfaces, and full
+SystemVerilog elaboration should be handled by an existing submodule extractor, Surelog/UHDM, or another
+proper front end. The remote verification capability depends only on the standard design manifest and not
+on the bundled front end.
+
+## Documentation
+
+- Design plan (19 sections): [`docs/design-plan.md`](docs/design-plan.md)
+- License: [MIT](LICENSE)
