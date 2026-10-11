@@ -1,4 +1,5 @@
-// blk_mem_gen_0.v —— 【转换后】兼容 Wrapper：与原模块同名同端口 → 上层 RTL / Testbench 不用改
+// blk_mem_gen_0.v -- [AFTER] compatible wrapper: same name and ports as the original module,
+//                  so the upper-level RTL / testbench needs no change
 module blk_mem_gen_0 (
   input  wire        clka,
   input  wire        clkb,

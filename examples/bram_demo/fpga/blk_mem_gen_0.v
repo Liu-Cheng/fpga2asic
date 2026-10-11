@@ -1,4 +1,4 @@
-// blk_mem_gen_0.v —— 【转换前】FPGA 侧：Vivado 生成风格，内部走厂商原语
+// blk_mem_gen_0.v -- [BEFORE] FPGA side: Vivado-generated style, internally a vendor primitive
 module blk_mem_gen_0 (
   input  wire        clka,
   input  wire        clkb,

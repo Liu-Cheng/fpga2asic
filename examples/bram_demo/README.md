@@ -1,41 +1,56 @@
-# bram_demo —— fpga2asic 转换前后「行为一致」最小可跑示例
+# bram_demo — minimal runnable "behavior identical before/after" example for fpga2asic
 
-**目的**：展示 fpga2asic 的替换思路，并**在本机（iverilog，不依赖 Xilinx/VCS）**验证
-「转换前 FPGA 侧」与「转换后 ASIC 侧」**行为完全一致**。
+**Purpose**: demonstrate the fpga2asic replacement idea and prove **on a local machine (iverilog, no
+Xilinx/VCS required)** that the "before — FPGA side" and the "after — ASIC side" are **behaviorally
+identical**.
 
-## 目录
+## Layout
 
 ```
-fpga/                        转换前（FPGA 侧）
-  vendor_prim_stub.v         RAMB36E1 行为子集 stub（仅本机演示用；真实由 Xilinx 仿真库提供）
-  blk_mem_gen_0.v            Vivado 生成风格：实例化厂商原语
-asic/                        转换后（ASIC 侧）
-  portable_true_dual_port_ram.v   可移植行为级模型（无厂商依赖，可 ASIC 综合）
-  blk_mem_gen_0.v                 兼容 Wrapper（与原模块同名同端口 → 上层/TB 不用改）
-tb/tb_bram.v                 公共 Testbench（两套实现共用，一行不改）
-run_demo.sh                  编译两套 + 跑 + 比较 trace
-build/                       产物（trace_fpga.txt / trace_asic.txt / trace.diff / 日志）
+fpga/                        BEFORE (FPGA side)
+  vendor_prim_stub.v         behaviorally equivalent subset stub for RAMB36E1 (local demo only;
+                             in production this comes from the Xilinx simulation libraries)
+  blk_mem_gen_0.v            Vivado-generated style: instantiates the vendor primitive
+asic/                        AFTER (ASIC side)
+  portable_true_dual_port_ram.v   portable behavioral model (no vendor dependency, ASIC synthesizable)
+  blk_mem_gen_0.v                 compatible wrapper (same name and ports as the original module,
+                                  so the upper level / TB needs no change)
+tb/tb_bram.v                 common testbench (shared by both implementations, unchanged)
+run_demo.sh                  build both + run + compare traces
+build/                       artifacts (trace_fpga.txt / trace_asic.txt / trace.diff / logs)
 ```
 
-## 运行
+## Run
 
 ```bash
 ./run_demo.sh
 ```
 
-预期输出：`✅ 行为一致：两份 trace 完全相同（N 行）`
+Expected output:
 
-## TB 覆盖的语义点
+```
+== Build [BEFORE - FPGA side] (vendor primitive path) ==
+== Build [AFTER  - ASIC side] (compatible wrapper + portable model) ==
+== Compare the two traces ==
+PASS: identical behavior - both traces are byte-identical (29 lines)
+```
 
-1. 全字写 + 1 周期读延迟
-2. **read-first**（同地址写入时，同拍读出旧值）
-3. **byte enable** 部分写
-4. 双端口独立读
-5. B 口写 → A 口读（跨端口可见）
+## Semantic points covered by the TB
 
-## 说明与边界
+1. Full-word write + 1-cycle read latency
+2. **read-first** (writing an address reads the *old* value in the same cycle)
+3. **byte enable** partial writes
+4. Independent dual-port reads
+5. Write on port B → read on port A (cross-port visibility)
 
-- `vendor_prim_stub.v` 是**行为等价的子集 stub**，只为让 demo 能在没有 Xilinx 仿真库的机器上跑通；
-  **正式验证**应把 `fpga/` 替换为 Vivado 生成的 IP 仿真模型，在 Xilinx 仿真器跑参考、在 VCS 跑替代实现（对应开发方案第 8–9 节）。
-- 比对方式在本 demo 里是「trace 文本逐行 diff」；正式流程用的是**信号级 cycle-exact 比较**（AXI 用事务级比较）。
-- 同地址双端口同时写属未定义行为（Xilinx 会给 x），本 demo 不构造该场景，替代模型也不擅自给出确定值。
+## Notes and boundaries
+
+- `vendor_prim_stub.v` is a **behaviorally equivalent subset stub**, only so the demo can run on a
+  machine without the Xilinx simulation libraries. **Production verification** should replace `fpga/`
+  with the Vivado-generated IP simulation model, run the reference on the Xilinx simulator and the
+  replacement implementation on VCS (see sections 8–9 of the design plan).
+- The comparison in this demo is a **line-by-line diff of trace text**; the production flow uses
+  **signal-level cycle-exact comparison** (transaction-level comparison for AXI).
+- Simultaneous writes to the same address from both ports is undefined behavior (Xilinx yields `x`);
+  this demo does not construct that scenario, and the replacement model does not invent a determined
+  value for it either.

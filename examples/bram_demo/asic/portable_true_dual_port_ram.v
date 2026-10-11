@@ -1,4 +1,5 @@
-// portable_true_dual_port_ram.v —— 【转换后】可移植行为级模型（无厂商依赖，可 ASIC 综合）
+// portable_true_dual_port_ram.v -- [AFTER] portable behavioral model (no vendor dependency,
+//                                 ASIC synthesizable)
 module portable_true_dual_port_ram #(
   parameter integer WIDTH = 32,
   parameter integer DEPTH = 1024,
@@ -17,7 +18,8 @@ module portable_true_dual_port_ram #(
   input  wire [WIDTH-1:0]   din_b,
   output reg  [WIDTH-1:0]   dout_b
 );
-  // 参数合法性检查（对应开发方案 10.1「参数约束与非法组合检查」）
+  // Parameter legality checks (design plan section 10.1, "parameter constraints and illegal
+  // combination checks")
   initial begin
       if (WIDTH % 8 != 0)            $display("ERROR: WIDTH must be multiple of 8");
       if (READ_LATENCY != 1)         $display("ERROR: only READ_LATENCY=1 supported");
@@ -31,7 +33,7 @@ module portable_true_dual_port_ram #(
     if (we_a[1]) mem[addr_a][15: 8] <= din_a[15: 8];
     if (we_a[2]) mem[addr_a][23:16] <= din_a[23:16];
     if (we_a[3]) mem[addr_a][31:24] <= din_a[31:24];
-    dout_a <= mem[addr_a];        // 非阻塞 → read-first（同地址写时读旧值）
+    dout_a <= mem[addr_a];        // non-blocking -> read-first (reads the old value on a same-address write)
   end
 
   always @(posedge clk_b) begin

@@ -1,5 +1,6 @@
-// tb_bram.v —— 【公共 Testbench】转换前后共用，一行不改
-// 覆盖：全字写、读延迟(1)、read-first、byte enable 部分写、双端口读、B 口写后 A 口读
+// tb_bram.v -- [common testbench] shared before and after the replacement, unchanged
+// Covers: full-word write, read latency (1), read-first, byte-enable partial write, dual-port read,
+// and read on port A after a write on port B
 `timescale 1ns/1ps
 `ifndef TRACE_FILE
   `define TRACE_FILE "trace.txt"
@@ -26,37 +27,37 @@ module tb_bram;
   initial begin
     fd = $fopen(`TRACE_FILE, "w");
 
-    // ① A 口全字写 16 个地址
+    // (1) Full-word write to 16 addresses on port A
     for (i = 0; i < 16; i = i + 1) begin
       addra = i[9:0]; dina = 32'hA0000000 + i; wea = 4'hF; step;
     end
     wea = 0; addra = 0; step;
     $fwrite(fd, "T=%0t A=%h B=%h\n", $time, douta, doutb);
 
-    // ② A 口顺序读回（验证 1 周期延迟）
+    // (2) Sequential read-back on port A (verifies the 1-cycle latency)
     for (i = 0; i < 16; i = i + 1) begin
       addra = i[9:0]; step;
       $fwrite(fd, "T=%0t A=%h B=%h\n", $time, douta, doutb);
     end
 
-    // ③ read-first：addr=5 写新值，同一拍读出的应是旧值
-    addra = 10'd5; dina = 32'hDEADBEEF; wea = 4'hF; step;   // 本拍 douta=旧值
+    // (3) read-first: write a new value to addr=5; the same cycle must read back the old value
+    addra = 10'd5; dina = 32'hDEADBEEF; wea = 4'hF; step;   // douta = old value in this cycle
     $fwrite(fd, "T=%0t A=%h B=%h\n", $time, douta, doutb);
-    wea = 0; step;                                          // 下一拍读到新值
+    wea = 0; step;                                          // next cycle reads the new value
     $fwrite(fd, "T=%0t A=%h B=%h\n", $time, douta, doutb);
 
-    // ④ byte enable 部分写：只改低 2 字节
+    // (4) byte-enable partial write: modify only the low 2 bytes
     addra = 10'd6; dina = 32'h0000FFFF; wea = 4'b0011; step;
     wea = 0; step;
     $fwrite(fd, "T=%0t A=%h B=%h\n", $time, douta, doutb);
 
-    // ⑤ B 口读若干地址（双端口独立读）
+    // (5) Read several addresses on port B (independent dual-port reads)
     for (i = 0; i < 8; i = i + 1) begin
       addrb = i[9:0]; step;
       $fwrite(fd, "T=%0t A=%h B=%h\n", $time, douta, doutb);
     end
 
-    // ⑥ B 口写 addr=100，再由 A 口读（跨端口可见）
+    // (6) Write addr=100 on port B, then read it on port A (cross-port visibility)
     addrb = 10'd100; dinb = 32'h5A5A1234; web = 4'hF; step;
     web = 0;
     addra = 10'd100; step; step;
